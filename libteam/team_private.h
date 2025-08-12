@@ -53,7 +53,8 @@ struct team_handle {
 	} change_handler;
 	struct {
 		struct nl_sock *	sock;
-		struct nl_sock *	sock_event;
+		// struct nl_sock *	sock_event;	
+		int sock_event; 
 	} nl_cli;
 	void (*log_fn)(struct team_handle *th, int priority,
 		       const char *file, int line, const char *fn,
