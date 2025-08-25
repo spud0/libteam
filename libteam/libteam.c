@@ -828,24 +828,29 @@ static int get_cli_sock_event_fd(struct team_handle *th)
 
 static int cli_sock_event_handler(struct team_handle *th)
 {
-	int err;
 
-	err = nl_recvmsgs_default(th->nl_cli.sock_event);
-	err = -nl2syserr(err);
+	char buf[4096];
+    ssize_t len = recv(th->nl_cli.sock_event, buf, sizeof(buf), 0);
+    if (len <= 0) {
+    	return (len == 0) ? -ECONNRESET : -errno;
+    }
+ 
+	struct nl_msg *msg = nlmsg_alloc_size(len);
+	if (!msg)
+		return -ENOMEM;
 
-	/* libnl thinks ENOBUFS and ENOMEM are same. Hope it was ENOBUFS. */
-	if (err == -ENOMEM) {
-		warn(th, "Lost link notifications from kernel.");
-		/* There's no way to know what events were lost and no
-		 * way to get them again. Refresh all.
-		 */
-		err = get_ifinfo_list(th);
+	memcpy(nlmsg_hdr(msg), buf, len);
+	int err = cli_event_handler(msg, th);
+
+	err = get_ifinfo_list(th);
+	if (err) {
+		nlmsg_free(msg);
+	 	return err;
 	}
 
-	if (err)
-		return err;
+	nlmsg_free(msg);
+ 	return check_call_change_handlers(th, TEAM_IFINFO_CHANGE);
 
-	return check_call_change_handlers(th, TEAM_IFINFO_CHANGE);
 }
 
 static int get_sock_event_fd(struct team_handle *th)
