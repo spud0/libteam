@@ -44,6 +44,8 @@
 #include <syslog.h>
 #include <sys/select.h>
 #include <sys/epoll.h>
+#include <sys/un.h>
+#include <sys/socket.h>
 #include <time.h>
 #include <netlink/netlink.h>
 #include <netlink/genl/genl.h>
@@ -57,6 +59,9 @@
 #include <private/list.h>
 #include <private/misc.h>
 #include "team_private.h"
+
+#define SOCKET_PATH "/tmp/nl-message.sock"
+
 
 /* \cond HIDDEN_SYMBOLS */
 
@@ -412,7 +417,8 @@ struct team_handle *team_alloc(void)
 	if (!th->nl_sock_event)
 		goto err_sk_event_alloc;
 
-	th->nl_cli.sock_event = nl_cli_alloc_socket();
+	// th->nl_cli.sock_event = nl_cli_alloc_socket();
+	th->nl_cli.sock_event = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (!th->nl_cli.sock_event)
 		goto err_cli_sk_event_alloc;
 
@@ -428,10 +434,16 @@ struct team_handle *team_alloc(void)
 err_cli_connect:
 	nl_socket_free(th->nl_cli.sock);
 
+/*	FIXME: 
+	I don't know why these goto's seem mixed up for the deallocations of 
+	nl_cli.sock_event and nl_sock_event.
+*/
 err_cli_sk_alloc:
-	nl_socket_free(th->nl_cli.sock_event);
+ 	close(th->nl_cli.sock_event);
+	// nl_socket_free(th->nl_cli.sock_event);
 
 err_cli_sk_event_alloc:
+ 	close(th->nl_cli.sock_event);
 	nl_socket_free(th->nl_sock_event);
 
 err_sk_event_alloc:
@@ -646,6 +658,8 @@ int team_init(struct team_handle *th, uint32_t ifindex)
 	nl_socket_modify_cb(th->nl_sock_event, NL_CB_VALID, NL_CB_CUSTOM,
 			    event_handler, th);
 
+	/* 
+
 	nl_socket_disable_seq_check(th->nl_cli.sock_event);
 	nl_socket_modify_cb(th->nl_cli.sock_event, NL_CB_VALID,
 			    NL_CB_CUSTOM, cli_event_handler, th);
@@ -663,6 +677,21 @@ int team_init(struct team_handle *th, uint32_t ifindex)
 		err(th, "Failed to add netlink membership.");
 		return -nl2syserr(err);
 	}
+
+	*/ 
+
+	struct sockaddr_un addr;
+   	memset(&addr, 0, sizeof(addr));
+   	addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
+ 
+	// Don't use nl2syserr since error isn't netlink related.
+ 	err = connect(th->nl_cli.sock_event, (struct sockaddr*) &addr, sizeof(addr));
+	if (err < 0) {	
+ 		err(th, "Failed to connect to libteam proxy.");
+ 		return err;  
+ 	}
+
 
 	err = ifinfo_list_init(th);
 	if (err) {
@@ -710,7 +739,8 @@ void team_free(struct team_handle *th)
 	port_list_free(th);
 	option_list_free(th);
 	nl_socket_free(th->nl_cli.sock);
-	nl_socket_free(th->nl_cli.sock_event);
+	// nl_socket_free(th->nl_cli.sock_event);
+	close(th->nl_cli.sock_event);
 	nl_socket_free(th->nl_sock_event);
 	nl_socket_free(th->nl_sock);
 	free(th);
@@ -793,7 +823,7 @@ void team_set_log_priority(struct team_handle *th, int priority)
 
 static int get_cli_sock_event_fd(struct team_handle *th)
 {
-	return nl_socket_get_fd(th->nl_cli.sock_event);
+	return th->nl_cli.sock_event;
 }
 
 static int cli_sock_event_handler(struct team_handle *th)
